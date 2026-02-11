@@ -2,9 +2,18 @@ import type { Candle, RLStatus, RiskSummary } from '@/types/market'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL
 
+function getBaseUrl(): string {
+  if (!BASE) {
+    throw new Error('NEXT_PUBLIC_API_URL is not configured')
+  }
+  return BASE
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`)
-  if (!res.ok) throw new Error(`Request failed: ${path}`)
+  const res = await fetch(`${getBaseUrl()}${path}`)
+  if (!res.ok) {
+    throw new Error(`Request failed (${res.status}) for ${path}`)
+  }
   return (await res.json()) as T
 }
 

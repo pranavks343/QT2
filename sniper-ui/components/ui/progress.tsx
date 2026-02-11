@@ -1,5 +1,7 @@
 'use client'
 
+import * as React from 'react'
+
 export function Progress({ value }: { value: number }): React.JSX.Element {
   return (
     <div className='h-2 w-full rounded bg-zinc-800'>

@@ -11,8 +11,10 @@ type AlphaData = Extract<WSMessage, { type: 'alpha_warning' }>['data']
 
 export function useMarketWebSocket(symbol: string, timeframe: string) {
   const wsRef = useRef<WebSocket | null>(null)
-  const reconnectRef = useRef<number>(1000)
-  const timerRef = useRef<number | null>(null)
+  const reconnectDelayRef = useRef<number>(1000)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const signalTimerRef = useRef<number | null>(null)
+  const shockTimerRef = useRef<number | null>(null)
 
   const [candles, setCandles] = useState<Candle[]>([])
   const [latestCandle, setLatestCandle] = useState<Candle | null>(null)
@@ -29,41 +31,59 @@ export function useMarketWebSocket(symbol: string, timeframe: string) {
   useEffect(() => {
     let isCancelled = false
 
+    const clearReconnectTimer = (): void => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+    }
+
     const connect = (): void => {
+      if (isCancelled) return
+
       const base = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
       const ws = new WebSocket(`${base}/ws/${symbol}/${timeframe}`)
       wsRef.current = ws
 
       ws.onopen = () => {
         if (isCancelled) return
+        clearReconnectTimer()
         setIsConnected(true)
         setIsReconnecting(false)
-        reconnectRef.current = 1000
+        reconnectDelayRef.current = 1000
       }
 
       ws.onclose = () => {
         if (isCancelled) return
         setIsConnected(false)
         setIsReconnecting(true)
-        window.setTimeout(connect, reconnectRef.current)
-        reconnectRef.current = Math.min(reconnectRef.current * 2, 30000)
+        clearReconnectTimer()
+        reconnectTimerRef.current = window.setTimeout(connect, reconnectDelayRef.current)
+        reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000)
       }
 
       ws.onerror = () => {
-        setError('WebSocket error')
+        if (!isCancelled) {
+          setError('WebSocket error')
+        }
       }
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data) as WSMessage
+
         if (msg.type === 'init') {
           setCandles(msg.data.candles)
-          if (msg.data.candles.length > 0) {
-            setLatestCandle(msg.data.candles[msg.data.candles.length - 1])
+          const initial = msg.data.candles[msg.data.candles.length - 1] ?? null
+          setLatestCandle(initial)
+          if (initial?.regime) {
+            setRegime(initial.regime)
           }
           return
         }
+
         if (msg.type === 'candle_update') {
           setLatestCandle(msg.data)
+          setRegime(msg.data.regime)
           setCandles((prev) => {
             const last = prev[prev.length - 1]
             if (last && last.datetime === msg.data.datetime) {
@@ -73,33 +93,45 @@ export function useMarketWebSocket(symbol: string, timeframe: string) {
           })
           return
         }
+
         if (msg.type === 'regime_change') {
           setRegime(msg.data.to)
           return
         }
+
         if (msg.type === 'signal_fired') {
           setLastSignal(msg.data)
-          if (timerRef.current) window.clearTimeout(timerRef.current)
-          timerRef.current = window.setTimeout(() => setLastSignal(null), 8000)
+          if (signalTimerRef.current !== null) {
+            window.clearTimeout(signalTimerRef.current)
+          }
+          signalTimerRef.current = window.setTimeout(() => setLastSignal(null), 8000)
           return
         }
+
         if (msg.type === 'shock_detected') {
           setShockActive(true)
-          window.setTimeout(() => setShockActive(false), msg.data.bars_cooldown * 3000)
+          if (shockTimerRef.current !== null) {
+            window.clearTimeout(shockTimerRef.current)
+          }
+          shockTimerRef.current = window.setTimeout(() => setShockActive(false), msg.data.bars_cooldown * 3000)
           return
         }
+
         if (msg.type === 'rl_decision') {
           setLastRLDecision(msg.data)
           return
         }
+
         if (msg.type === 'alpha_warning') {
           setAlphaWarning(msg.data)
           return
         }
+
         if (msg.type === 'risk_update') {
           setRiskStatus(msg.data)
           return
         }
+
         if (msg.type === 'error') {
           setError(msg.data.message)
         }
@@ -110,8 +142,15 @@ export function useMarketWebSocket(symbol: string, timeframe: string) {
 
     return () => {
       isCancelled = true
-      if (timerRef.current) window.clearTimeout(timerRef.current)
+      clearReconnectTimer()
+      if (signalTimerRef.current !== null) {
+        window.clearTimeout(signalTimerRef.current)
+      }
+      if (shockTimerRef.current !== null) {
+        window.clearTimeout(shockTimerRef.current)
+      }
       wsRef.current?.close()
+      wsRef.current = null
     }
   }, [symbol, timeframe])
 

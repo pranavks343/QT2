@@ -41,6 +41,10 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _is_nan(value: Any) -> bool:
+    return value != value
+
+
 def _build_candle(row, ts: datetime) -> Dict[str, Any]:
     return {
         "datetime": ts.isoformat(),
@@ -57,9 +61,9 @@ def _build_candle(row, ts: datetime) -> Dict[str, Any]:
         "raw_signal": int(row.get("raw_signal", 0) or 0),
         "regime": str(row.get("regime", "ranging") or "ranging"),
         "ml_score": _num(row.get("ml_score", 0)),
-        "shock_detected": bool(row.get("shock_detected", False)),
-        "stop_loss": _num(row.get("stop_loss")) if row.get("stop_loss") is not None else None,
-        "take_profit": _num(row.get("take_profit")) if row.get("take_profit") is not None else None,
+        "shock_detected": False if _is_nan(row.get("shock_detected", False)) else bool(row.get("shock_detected", False)),
+        "stop_loss": None if row.get("stop_loss") is None or _is_nan(row.get("stop_loss")) else _num(row.get("stop_loss")),
+        "take_profit": None if row.get("take_profit") is None or _is_nan(row.get("take_profit")) else _num(row.get("take_profit")),
     }
 
 
@@ -86,7 +90,10 @@ async def market_stream(websocket: WebSocket, symbol: str, timeframe: str):
     alpha_monitor = AlphaDecayMonitor()
     risk_manager = RiskManager()
     rl_executor = RLExecutor()
-    rl_executor.load("models/rl_agent")
+    try:
+        rl_executor.load("models/rl_agent")
+    except Exception:
+        rl_executor.is_loaded = False
 
     async def stream_loop() -> None:
         nonlocal prev_regime, last_signal_ts
@@ -149,8 +156,6 @@ async def market_stream(websocket: WebSocket, symbol: str, timeframe: str):
                     {"action": rl_action, "confidence": rl_conf, "overrode_signal": overrode, "timestamp": datetime.utcnow().isoformat()},
                 )
 
-                # keep monitor updated with soft approximation
-                alpha_monitor.update("win" if candle["signal"] > 0 else "loss", candle["close"] * 0.001)
                 alpha_status = alpha_monitor.status()
                 if alpha_status.get("decay_flag", False):
                     await _safe_send(

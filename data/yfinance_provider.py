@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 import pandas as pd
 import yfinance as yf
 
+from config import STRATEGY
+
 from .base_provider import BaseDataProvider, SyntheticProvider
+
+LOGGER = logging.getLogger(__name__)
 
 
 class YFinanceProvider(BaseDataProvider):
@@ -30,16 +35,30 @@ class YFinanceProvider(BaseDataProvider):
         "5m": "5m",
         "15m": "15m",
         "1d": "1d",
+        "1min": "1m",
+        "5min": "5m",
+        "15min": "15m",
+        "day": "1d",
     }
 
-    def fetch(
-        self,
-        symbol: str,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        timeframe: str = "5m",
-        bars: int = 200,
-    ) -> pd.DataFrame:
+    def fetch(self, symbol: str, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
+        """Base provider-compatible fetch signature."""
+        timeframe = self.TIMEFRAME_MAP.get(STRATEGY.get("timeframe", "5min"), "5m")
+        return self._download(symbol=symbol, start=start, end=end, timeframe=timeframe, bars=200)
+
+    def fetch_latest(self, symbol: str, timeframe: str = "5m", bars: int = 200) -> pd.DataFrame:
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=14 if timeframe in {"1m", "5m", "15m"} else max(30, bars * 2))
+        df = self._download(
+            symbol=symbol,
+            start=start_dt.isoformat(),
+            end=end_dt.isoformat(),
+            timeframe=timeframe,
+            bars=bars,
+        )
+        return df.tail(bars)
+
+    def _download(self, symbol: str, start: Optional[str], end: Optional[str], timeframe: str, bars: int) -> pd.DataFrame:
         mapped_symbol = self.SYMBOL_MAP.get(symbol.upper(), symbol)
         interval = self.TIMEFRAME_MAP.get(timeframe, "5m")
 
@@ -73,23 +92,10 @@ class YFinanceProvider(BaseDataProvider):
             df.index = pd.to_datetime(df.index).tz_localize(None)
             df = df.sort_index()
             df = df[~df.index.duplicated(keep="last")]
-
             return self.validate(df)
-        except Exception as exc:
-            print(f"[yfinance] warning: {exc}. Falling back to synthetic provider.")
+        except (ValueError, RuntimeError) as exc:
+            LOGGER.warning("yfinance fetch failed for %s (%s): %s. Falling back to synthetic provider.", symbol, timeframe, exc)
             return SyntheticProvider().fetch(symbol=symbol, start=start, end=end)
-
-    def fetch_latest(self, symbol: str, timeframe: str = "5m", bars: int = 200) -> pd.DataFrame:
-        end = datetime.now()
-        start = end - timedelta(days=14 if timeframe in {"1m", "5m", "15m"} else bars * 2)
-        df = self.fetch(
-            symbol=symbol,
-            start=start.isoformat(),
-            end=end.isoformat(),
-            timeframe=timeframe,
-            bars=bars,
-        )
-        return df.tail(bars)
 
 
 __all__ = ["YFinanceProvider"]

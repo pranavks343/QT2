@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -120,6 +120,10 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _is_nan(value: Any) -> bool:
+    return value != value
+
+
 def _to_candles(df) -> List[Candle]:
     out: List[Candle] = []
     for idx, row in df.iterrows():
@@ -139,9 +143,9 @@ def _to_candles(df) -> List[Candle]:
                 raw_signal=int(row.get("raw_signal", 0) or 0),
                 regime=str(row.get("regime", "ranging") or "ranging"),
                 ml_score=_num(row.get("ml_score", 0)),
-                shock_detected=bool(row.get("shock_detected", False)),
-                stop_loss=_num(row.get("stop_loss")) if row.get("stop_loss") is not None else None,
-                take_profit=_num(row.get("take_profit")) if row.get("take_profit") is not None else None,
+                shock_detected=False if _is_nan(row.get("shock_detected", False)) else bool(row.get("shock_detected", False)),
+                stop_loss=None if row.get("stop_loss") is None or _is_nan(row.get("stop_loss")) else _num(row.get("stop_loss")),
+                take_profit=None if row.get("take_profit") is None or _is_nan(row.get("take_profit")) else _num(row.get("take_profit")),
             )
         )
     return out
@@ -218,7 +222,15 @@ async def rl_status() -> RLStatusResponse:
 
 
 @router.get("/costs", response_model=CostSummaryResponse)
-async def costs(entry: float, exit: float, lots: int = 1, direction: int = 1) -> CostSummaryResponse:
+async def costs(
+    entry: float,
+    exit: float,
+    lots: int = Query(1, ge=1),
+    direction: int = Query(1, ge=-1, le=1),
+) -> CostSummaryResponse:
+    if direction not in (-1, 1):
+        raise HTTPException(status_code=422, detail="direction must be 1 (LONG) or -1 (SHORT)")
+
     model = ExecutionCostModel()
     ticket = TradeTicket(
         direction=direction,
