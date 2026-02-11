@@ -26,12 +26,12 @@ export type WSMessage =
   | { type: 'init'; data: { candles: Candle[]; symbol: string }; timestamp: string }
   | { type: 'candle_update'; data: Candle; timestamp: string }
   | { type: 'regime_change'; data: { from: RegimeType; to: RegimeType; timestamp: string }; timestamp: string }
-  | { type: 'signal_fired'; data: { direction: DirectionType; ml_score: number; entry_price: number; stop_loss: number; take_profit: number; regime: RegimeType }; timestamp: string }
+  | { type: 'signal_fired'; data: { direction: DirectionType; ml_score: number; entry_price: number; stop_loss: number; take_profit: number; regime: RegimeType; timestamp: string }; timestamp: string }
   | { type: 'shock_detected'; data: { vol_ratio: number; bars_cooldown: number; timestamp: string }; timestamp: string }
-  | { type: 'rl_decision'; data: { action: ActionType; confidence: number; overrode_signal: boolean }; timestamp: string }
-  | { type: 'alpha_warning'; data: { rolling_sharpe: number; baseline_sharpe: number; rolling_accuracy: number }; timestamp: string }
-  | { type: 'risk_update'; data: { drawdown_pct: number; current_capital: number; daily_pnl_pct: number; trading_halted: boolean }; timestamp: string }
-  | { type: 'error'; data: { message: string }; timestamp: string }
+  | { type: 'rl_decision'; data: { action: ActionType; confidence: number; overrode_signal: boolean; timestamp: string }; timestamp: string }
+  | { type: 'alpha_warning'; data: { rolling_sharpe: number; baseline_sharpe: number; rolling_accuracy: number; timestamp: string }; timestamp: string }
+  | { type: 'risk_update'; data: { drawdown_pct: number; current_capital: number; daily_pnl_pct: number; trading_halted: boolean; timestamp: string }; timestamp: string }
+  | { type: 'error'; data: { message: string; timestamp?: string }; timestamp: string }
 
 export type RiskSummary = {
   current_capital: number

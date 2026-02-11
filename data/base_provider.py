@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from typing import Optional
 from config import DATA, STRATEGY
 
 
@@ -20,7 +21,7 @@ class BaseDataProvider(ABC):
     """
 
     @abstractmethod
-    def fetch(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+    def fetch(self, symbol: str, start: Optional[str] = None, end: Optional[str] = None) -> pd.DataFrame:
         """Fetch OHLCV data for symbol between start and end dates."""
         pass
 
