@@ -1,39 +1,35 @@
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import type { Candle, RLStatus, RiskSummary } from '@/types/market'
+
+const BASE = process.env.NEXT_PUBLIC_API_URL
+
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`)
+  if (!res.ok) throw new Error(`Request failed: ${path}`)
+  return (await res.json()) as T
+}
 
 export async function fetchSymbols(): Promise<string[]> {
-  const res = await fetch(`${BASE_URL}/api/symbols`)
-  const data = await res.json()
+  const data = await getJson<{ symbols: string[] }>('/api/symbols')
   return data.symbols
 }
 
-export async function fetchMarketData(symbol: string, bars: number, timeframe: string) {
-  const res = await fetch(`${BASE_URL}/api/data?symbol=${symbol}&bars=${bars}&timeframe=${timeframe}`)
-  if (!res.ok) throw new Error('Failed to fetch market data')
-  return res.json()
+export async function fetchData(symbol: string, bars: number, timeframe: string): Promise<Candle[]> {
+  const data = await getJson<{ candles: Candle[] }>(`/api/data?symbol=${symbol}&bars=${bars}&timeframe=${timeframe}`)
+  return data.candles
 }
 
-export async function fetchRiskSummary() {
-  const res = await fetch(`${BASE_URL}/api/risk-summary`)
-  if (!res.ok) throw new Error('Failed to fetch risk summary')
-  return res.json()
+export async function fetchRiskSummary(): Promise<RiskSummary> {
+  return getJson<RiskSummary>('/api/risk-summary')
 }
 
-export async function fetchRLStatus() {
-  const res = await fetch(`${BASE_URL}/api/rl-status`)
-  if (!res.ok) throw new Error('Failed to fetch RL status')
-  return res.json()
+export async function fetchRLStatus(): Promise<RLStatus> {
+  return getJson<RLStatus>('/api/rl-status')
 }
 
-export async function fetchBacktest(symbol: string, bars: number) {
-  const res = await fetch(`${BASE_URL}/api/backtest?symbol=${symbol}&bars=${bars}`)
-  if (!res.ok) throw new Error('Failed to fetch backtest')
-  return res.json()
+export async function fetchBacktest(symbol: string, bars: number): Promise<Record<string, unknown>> {
+  return getJson<Record<string, unknown>>(`/api/backtest?symbol=${symbol}&bars=${bars}`)
 }
 
-export async function fetchCosts(entry: number, exit: number, lots: number, direction: number) {
-  const res = await fetch(
-    `${BASE_URL}/api/costs?entry=${entry}&exit=${exit}&lots=${lots}&direction=${direction}`
-  )
-  if (!res.ok) throw new Error('Failed to fetch costs')
-  return res.json()
+export async function fetchCosts(entry: number, exit: number, lots: number, direction: number): Promise<Record<string, unknown>> {
+  return getJson<Record<string, unknown>>(`/api/costs?entry=${entry}&exit=${exit}&lots=${lots}&direction=${direction}`)
 }
