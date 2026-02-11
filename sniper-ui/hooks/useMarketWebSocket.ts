@@ -1,169 +1,164 @@
-"use client"
+'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import type { Candle, WSMessage, RegimeType, ActionType } from '@/types/market'
+import { useEffect, useRef, useState } from 'react'
 
-type SignalData = {
-  direction: string
-  ml_score: number
-  entry_price: number
-  stop_loss: number
-  take_profit: number
-  regime: RegimeType
-}
+import type { Candle, RegimeType, WSMessage } from '@/types/market'
 
-type RLDecisionData = {
-  action: ActionType
-  confidence: number
-  overrode_signal: boolean
-}
-
-type RiskData = {
-  drawdown_pct: number
-  current_capital: number
-  daily_pnl_pct: number
-  trading_halted: boolean
-}
+type SignalData = Extract<WSMessage, { type: 'signal_fired' }>['data']
+type RLData = Extract<WSMessage, { type: 'rl_decision' }>['data']
+type RiskData = Extract<WSMessage, { type: 'risk_update' }>['data']
+type AlphaData = Extract<WSMessage, { type: 'alpha_warning' }>['data']
 
 export function useMarketWebSocket(symbol: string, timeframe: string) {
+  const wsRef = useRef<WebSocket | null>(null)
+  const reconnectDelayRef = useRef<number>(1000)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const signalTimerRef = useRef<number | null>(null)
+  const shockTimerRef = useRef<number | null>(null)
+
   const [candles, setCandles] = useState<Candle[]>([])
   const [latestCandle, setLatestCandle] = useState<Candle | null>(null)
   const [lastSignal, setLastSignal] = useState<SignalData | null>(null)
-  const [lastRLDecision, setLastRLDecision] = useState<RLDecisionData | null>(null)
+  const [lastRLDecision, setLastRLDecision] = useState<RLData | null>(null)
   const [regime, setRegime] = useState<RegimeType>('ranging')
   const [riskStatus, setRiskStatus] = useState<RiskData | null>(null)
+  const [alphaWarning, setAlphaWarning] = useState<AlphaData | null>(null)
   const [shockActive, setShockActive] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
+  const [isReconnecting, setIsReconnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const reconnectAttempts = useRef(0)
+  useEffect(() => {
+    let isCancelled = false
 
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return
-    }
-
-    const wsUrl = `${process.env.NEXT_PUBLIC_WS_URL}/ws/${symbol}/${timeframe}`
-    console.log(`[WS] Connecting to ${wsUrl}`)
-
-    const ws = new WebSocket(wsUrl)
-
-    ws.onopen = () => {
-      console.log('[WS] Connected')
-      setIsConnected(true)
-      setError(null)
-      reconnectAttempts.current = 0
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const message: WSMessage = JSON.parse(event.data)
-
-        switch (message.type) {
-          case 'init':
-            console.log(`[WS] Received ${message.data.candles.length} initial candles`)
-            setCandles(message.data.candles)
-            if (message.data.candles.length > 0) {
-              const latest = message.data.candles[message.data.candles.length - 1]
-              setLatestCandle(latest)
-              setRegime(latest.regime)
-            }
-            break
-
-          case 'candle_update':
-            setLatestCandle(message.data)
-            setRegime(message.data.regime)
-            setCandles(prev => {
-              // Update last candle if same datetime, otherwise append
-              if (prev.length > 0 && prev[prev.length - 1].datetime === message.data.datetime) {
-                return [...prev.slice(0, -1), message.data]
-              }
-              return [...prev, message.data]
-            })
-            break
-
-          case 'regime_change':
-            console.log(`[WS] Regime changed: ${message.data.from} → ${message.data.to}`)
-            setRegime(message.data.to)
-            break
-
-          case 'signal_fired':
-            console.log(`[WS] Signal fired: ${message.data.direction}`)
-            setLastSignal(message.data)
-            // Clear after 8 seconds
-            setTimeout(() => setLastSignal(null), 8000)
-            break
-
-          case 'shock_detected':
-            console.log('[WS] Shock detected')
-            setShockActive(true)
-            // Clear after cooldown
-            setTimeout(() => setShockActive(false), message.data.bars_cooldown * 3000)
-            break
-
-          case 'rl_decision':
-            setLastRLDecision(message.data)
-            break
-
-          case 'risk_update':
-            setRiskStatus(message.data)
-            break
-
-          case 'alpha_warning':
-            console.warn('[WS] Alpha decay warning', message.data)
-            break
-
-          case 'error':
-            console.error('[WS] Server error:', message.data.message)
-            setError(message.data.message)
-            break
-
-          default:
-            console.warn('[WS] Unknown message type:', message)
-        }
-      } catch (err) {
-        console.error('[WS] Failed to parse message:', err)
+    const clearReconnectTimer = (): void => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
       }
     }
 
-    ws.onerror = (event) => {
-      console.error('[WS] Error:', event)
-      setIsConnected(false)
-      setError('WebSocket connection error')
+    const connect = (): void => {
+      if (isCancelled) return
+
+      const base = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
+      const ws = new WebSocket(`${base}/ws/${symbol}/${timeframe}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        if (isCancelled) return
+        clearReconnectTimer()
+        setIsConnected(true)
+        setIsReconnecting(false)
+        reconnectDelayRef.current = 1000
+      }
+
+      ws.onclose = () => {
+        if (isCancelled) return
+        setIsConnected(false)
+        setIsReconnecting(true)
+        clearReconnectTimer()
+        reconnectTimerRef.current = window.setTimeout(connect, reconnectDelayRef.current)
+        reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000)
+      }
+
+      ws.onerror = () => {
+        if (!isCancelled) {
+          setError('WebSocket error')
+        }
+      }
+
+      ws.onmessage = (event) => {
+        let msg: WSMessage
+        try {
+          msg = JSON.parse(event.data) as WSMessage
+        } catch {
+          setError('Received malformed message')
+          return
+        }
+
+        if (msg.type === 'init') {
+          setCandles(msg.data.candles)
+          const initial = msg.data.candles[msg.data.candles.length - 1] ?? null
+          setLatestCandle(initial)
+          if (initial?.regime) {
+            setRegime(initial.regime)
+          }
+          return
+        }
+
+        if (msg.type === 'candle_update') {
+          setLatestCandle(msg.data)
+          setRegime(msg.data.regime)
+          setCandles((prev) => {
+            const last = prev[prev.length - 1]
+            if (last && last.datetime === msg.data.datetime) {
+              return [...prev.slice(0, -1), msg.data]
+            }
+            return [...prev, msg.data].slice(-500)
+          })
+          return
+        }
+
+        if (msg.type === 'regime_change') {
+          setRegime(msg.data.to)
+          return
+        }
+
+        if (msg.type === 'signal_fired') {
+          setLastSignal(msg.data)
+          if (signalTimerRef.current !== null) {
+            window.clearTimeout(signalTimerRef.current)
+          }
+          signalTimerRef.current = window.setTimeout(() => setLastSignal(null), 8000)
+          return
+        }
+
+        if (msg.type === 'shock_detected') {
+          setShockActive(true)
+          if (shockTimerRef.current !== null) {
+            window.clearTimeout(shockTimerRef.current)
+          }
+          shockTimerRef.current = window.setTimeout(() => setShockActive(false), msg.data.bars_cooldown * 3000)
+          return
+        }
+
+        if (msg.type === 'rl_decision') {
+          setLastRLDecision(msg.data)
+          return
+        }
+
+        if (msg.type === 'alpha_warning') {
+          setAlphaWarning(msg.data)
+          return
+        }
+
+        if (msg.type === 'risk_update') {
+          setRiskStatus(msg.data)
+          return
+        }
+
+        if (msg.type === 'error') {
+          setError(msg.data.message)
+        }
+      }
     }
 
-    ws.onclose = () => {
-      console.log('[WS] Connection closed')
-      setIsConnected(false)
-
-      // Exponential backoff reconnect
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000)
-      reconnectAttempts.current++
-
-      console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`)
-
-      reconnectTimeoutRef.current = setTimeout(() => {
-        connect()
-      }, delay)
-    }
-
-    wsRef.current = ws
-  }, [symbol, timeframe])
-
-  useEffect(() => {
     connect()
 
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
+      isCancelled = true
+      clearReconnectTimer()
+      if (signalTimerRef.current !== null) {
+        window.clearTimeout(signalTimerRef.current)
       }
-      if (wsRef.current) {
-        wsRef.current.close()
+      if (shockTimerRef.current !== null) {
+        window.clearTimeout(shockTimerRef.current)
       }
+      wsRef.current?.close()
+      wsRef.current = null
     }
-  }, [connect])
+  }, [symbol, timeframe])
 
   return {
     candles,
@@ -172,8 +167,10 @@ export function useMarketWebSocket(symbol: string, timeframe: string) {
     lastRLDecision,
     regime,
     riskStatus,
+    alphaWarning,
     shockActive,
     isConnected,
+    isReconnecting,
     error,
   }
 }
