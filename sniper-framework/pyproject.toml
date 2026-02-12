@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sniper-framework"
+version = "1.0.0"
+description = "Institutional-grade algorithmic trading framework for Indian derivatives"
+authors = [{name = "Sniper", email = "sniper@example.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=1.5.0",
+    "numpy>=1.23.0",
+    "pydantic>=2.0.0",
+]
+# Optional: yfinance for live data
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0"]
+yfinance = ["yfinance>=0.2.0"]
+hmm = ["hmmlearn>=0.3.0"]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/sniper-framework"
+Documentation = "https://sniper-framework.readthedocs.io"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sniper*"]
